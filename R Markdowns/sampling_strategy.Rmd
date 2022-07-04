@@ -1,0 +1,171 @@
+---
+title: "sampling_strategy"
+output: html_document
+date: '2022-06-01'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Loading the data
+```{r, message = FALSE}
+library(readr)
+library(dplyr)
+library(data.table)
+```
+
+We want to take a sample total of approx 30m
+```{r}
+# lets say there's 175m tweets here, and we want approx 30m, we want 17%
+set.seed(1)
+options(scipen = 100)
+sampling <- function(tsv){
+  data <- read_tsv(file = tsv, col_names = TRUE)
+  
+  # only English language tweets
+  data <- data %>% filter(lang == "en")
+  
+  # changing the format of the date_time 
+  data$date_time <- as.IDate(data$date_time)
+  
+  print(unique(data$date_time))
+  # vector of all dates
+  dates <- unique(data$date_time)
+  
+  # empty vector to store tweet ids
+  tweet_ids <- c()
+  
+  # goes through each date and takes a random sample of 8% of the tweets for that day
+  for (i in dates){
+    
+    # tweets from date i
+    sampled <- data %>% 
+      filter(date_time == i)
+    
+    # finds the number of tweets to select to have 8%
+    n <- nrow(sampled)
+    s <- floor(0.17*n)
+    
+    # randomly samples from the indexes of the sample data
+    sample_ix <- sample(1:nrow(sampled), size = s)
+    ix <- sampled[sample_ix,]$tweet_id
+    
+    # adds the tweet ids of the randomly sampled to the vector
+    tweet_ids <- c(tweet_ids, ix)
+  }
+
+  # finally, sampling from the data 
+  the_sample <- data %>%
+    filter(tweet_id %in% tweet_ids)
+  
+  return(the_sample)
+}
+
+
+TBCOVaustralia_01 <- sampling("../australia_tbcov/australia_1.tsv")
+TBCOVaustralia_02 <- sampling("../australia_tbcov/australia_2.tsv")
+
+TBCOVaustralia <- rbind(TBCOVaustralia_01,TBCOVaustralia_02)
+write.csv(TBCOVaustralia, "../sampled_data/TBCOVaustralia.csv")
+
+TBCOVcanada_01 <- sampling("../canada_tbcov/canada_1.tsv")
+TBCOVcanada_02 <- sampling("../canada_tbcov/canada_2.tsv")
+TBCOVcanada_03 <- sampling("../canada_tbcov/canada_3.tsv")
+TBCOVcanada_04 <- sampling("../canada_tbcov/canada_4.tsv")
+TBCOVcanada_05 <- sampling("../canada_tbcov/canada_5.tsv")
+
+TBCOVcanada <- rbind(TBCOVcanada_01,TBCOVcanada_02,TBCOVcanada_03,TBCOVcanada_04,TBCOVcanada_05)
+write.csv(TBCOVcanada, "../sampled_data/TBCOVcanada.csv")
+
+TBCOVireland <- sampling("../ireland_tbcov/ireland_tbcov.tsv")
+
+write.csv(TBCOVireland, "../sampled_data/TBCOVireland.csv")
+TBCOVnew_zealand <- sampling("../new_zealand_tbcov/new_zealand_tbcov.tsv")
+write.csv(TBCOVnew_zealand, "../sampled_data/TBCOVnew_zealand.csv")
+
+TBCOVuk_01 <- sampling("../united_kingdom_tbcov/united_kingdom_01.tsv")
+TBCOVuk_02 <- sampling("../united_kingdom_tbcov/united_kingdom_02.tsv")
+TBCOVuk_03 <- sampling("../united_kingdom_tbcov/united_kingdom_03.tsv")
+TBCOVuk_04 <- sampling("../united_kingdom_tbcov/united_kingdom_04.tsv")
+TBCOVuk_05 <- sampling("../united_kingdom_tbcov/united_kingdom_05.tsv")
+
+TBCOVuk_01 <- rbind(TBCOVuk_01,TBCOVuk_02,TBCOVuk_03,TBCOVuk_04,TBCOVuk_05)
+write.csv(TBCOVuk_01, "../sampled_data/TBCOVuk_01.csv")
+
+TBCOVuk_06 <- sampling("../united_kingdom_tbcov/united_kingdom_06.tsv")
+TBCOVuk_07 <- sampling("../united_kingdom_tbcov/united_kingdom_07.tsv")
+TBCOVuk_08 <- sampling("../united_kingdom_tbcov/united_kingdom_08.tsv")
+TBCOVuk_09 <- sampling("../united_kingdom_tbcov/united_kingdom_09.tsv")
+TBCOVuk_10 <- sampling("../united_kingdom_tbcov/united_kingdom_10.tsv")
+TBCOVuk_11 <- sampling("../united_kingdom_tbcov/united_kingdom_11.tsv")
+
+TBCOVuk_02 <- rbind(TBCOVuk_06,TBCOVuk_07,TBCOVuk_08,TBCOVuk_09,TBCOVuk_10, TBCOVuk_11)
+write.csv(TBCOVuk_02, "../sampled_data/TBCOVuk_02.csv")
+
+```
+### Redoing the sample
+After running an initial hydration of the ireland and nz tweets, counting the number retrieved and the number of duplicated texts, I decided to resample, and randomly reduce the number of tweets to 0.35 of the original size.
+I intend to have approximately 1m unique tweets in my active learning model.
+```{r}
+set.seed(1)
+ireland<- read_csv("C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVireland.csv")
+new_zealand <- read_csv("C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVnew_zealand.csv")
+australia<- read_csv("C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVaustralia.csv")
+canada <- read_csv("C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVcanada.csv")
+uk_01 <- read_csv("C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVuk_01.csv")
+uk_02 <- read_csv("C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVuk_02.csv")
+
+#lets reduce it to 1/3 for the remaining ones, and also randomly sample 1/3 of the ireland and nz ones
+random_sample <- function(data, proportion){
+  # finds the number of tweets to select to have 8%
+  n <- nrow(data)
+  s <- floor(proportion*n)
+    
+  # randomly samples from the indexes of the sample data
+  sample_ix <- sample(1:nrow(data), size = s)
+  
+  data <- data[sample_ix,]
+  
+  return(data)
+}
+
+options(scipen = 100)
+australia_sample <- random_sample(australia, 0.35)
+tweet_ids <- australia_sample$tweet_id
+write.table(tweet_ids, "../tweet_ids/tweets_australia.txt", sep = "/n",
+            row.names = FALSE, col.names = FALSE)
+write.csv(australia_sample, "C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVaustralia.csv")
+
+options(scipen = 100)
+canada_sample <- random_sample(canada, 0.35)
+tweet_ids <- canada_sample$tweet_id
+write.table(tweet_ids, "../tweet_ids/tweets_canada.txt", sep = "/n",
+            row.names = FALSE, col.names = FALSE)
+write.csv(canada_sample, "C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVcanada.csv")
+
+# I am not producing a txt file for this as I have already retrieved all tweets for ireland and nz
+options(scipen = 100)
+ireland_sample <- random_sample(ireland, 0.35)
+write.csv(ireland_sample, "C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVireland.csv")
+
+options(scipen = 100)
+new_zealand_sample <- random_sample(new_zealand, 0.35)
+write.csv(new_zealand_sample, "C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVnew_zealand.csv")
+
+options(scipen = 100)
+uk_01_sample <- random_sample(uk_01, 0.35)
+tweet_ids <- uk_01_sample$tweet_id
+write.table(tweet_ids, "../tweet_ids/tweets_uk_01.txt", sep = "/n",
+            row.names = FALSE, col.names = FALSE)
+write.csv(uk_01_sample, "C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVuk_01.csv")
+
+options(scipen = 100)
+uk_02_sample <- random_sample(uk_02, 0.35)
+tweet_ids <- uk_02_sample$tweet_id
+write.table(tweet_ids, "../tweet_ids/tweets_uk_02.txt", sep = "/n",
+            row.names = FALSE, col.names = FALSE)
+write.csv(uk_02_sample, "C:/Users/kcrow/Documents/Capstone/sampled_data/TBCOVuk_02.csv")
+
+```
+
