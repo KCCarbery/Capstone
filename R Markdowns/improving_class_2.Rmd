@@ -1,0 +1,479 @@
+---
+title: "improving class 2"
+output: html_document
+date: '2022-07-21'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+unlabeled <- read_csv("unlabeled.csv")
+labeled <- read_csv("labeled.csv")
+test <- read_csv("final_test.csv")
+```
+
+
+```{r}
+active_learning <- function(data, min_freq, C, ixes, vals){
+  
+  # updating labels from the previous iterations
+  if (length(vals) == 0){
+    
+  } else {
+    for (i in 1:length(ixes)){
+      data$class[ixes[i]] <- vals[i]
+      }
+  }
+  
+  # creating a variable with the index
+  data$index <- 1:nrow(data)
+  
+  # transform response variable to factor
+  data$class <- factor(data$class)
+  
+  corpus <- corpus(data, text_field="text") 
+  toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+  toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+  toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+  mydfm <- dfm(toks_ngram, tolower=TRUE)
+  mydfm <- dfm_trim(mydfm, min_docfreq = min_freq)
+
+  # Separate labeled documents from unlabeled documents 
+  unlabeled <- dfm_subset(mydfm, is.na(mydfm$class))
+  labeled <- dfm_subset(mydfm, !is.na(mydfm$class))
+  
+  #checking its working
+  print(nrow(unlabeled))
+  
+  svmfit <- svm(x=labeled, y=docvars(labeled, "class"), kernel = "linear", cost = C, scale = FALSE)
+  
+  # target observations closest to decision boundary
+  pred <- predict(svmfit, unlabeled, decision.values = TRUE)
+  
+  print(pred)
+  # getting for the 3 different classes
+  dist_2 <- abs(attr(pred, "decision.values")[,2])
+  
+  sorted_2 <- sort(dist_2, index.return = TRUE)
+  
+  # saving uncertainty values
+  uncert_2 <- sum(sorted_2$x)
+  
+  index_2 <- sorted_2$ix[1:15]
+  
+  unlabeled_text <- data %>%
+    filter(is.na(class)==TRUE)
+  
+  ix_2 <- unlabeled_text$index[index_2]
+  
+  texts <- unlabeled_text$text[index_2]
+  
+  print(uncert_2)
+
+  return(list(texts, ix_2, data))
+}
+
+```
+
+
+## 1. Take a small subset of the unlabeled data (its already randomly ordered)
+```{r}
+improving <- unlabeled[1:50000,]
+unlabeled <- unlabeled[50001:nrow(unlabeled),]
+
+write.csv(unlabeled, "unlabeled.csv")
+write.csv(improving, "improving.csv")
+```
+
+```{r}
+improving <- improving[,-c(1,7)]
+labeled <- labeled[,-c(1:3)]
+
+data <- rbind(labeled, improving)
+```
+
+```{r}
+im_1 <- active_learning(data, 3, 12, c(), c())
+
+ixes <- im_1[[2]]
+data <- im_1[[3]]
+
+
+im_1[[1]]
+vals <- c(0,2,0,0,0,
+          0,0,2,0,0,
+          0,2,2,0,2)
+
+```
+
+```{r}
+im_2 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_2[[2]]
+data <- im_2[[3]]
+
+
+im_2[[1]]
+vals <- c(0,2,0,2,0,
+          0,0,2,0,0,
+          2,0,0,0,1)
+
+```
+
+```{r}
+im_3 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_3[[2]]
+data <- im_3[[3]]
+
+
+im_3[[1]]
+vals <- c(0,2,2,0,2,
+          0,1,0,1,1,
+          2,0,0,0,0)
+
+```
+
+```{r}
+im_4 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_4[[2]]
+data <- im_4[[3]]
+
+im_4[[1]]
+vals <- c(0,0,0,0,0,
+          2,2,2,0,2,
+          0,0,0,0,0)
+
+```
+
+```{r}
+im_5 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_5[[2]]
+data <- im_5[[3]]
+
+im_5[[1]]
+vals <- c(0,0,2,2,0,
+          2,0,0,1,2,
+          0,2,0,1,0)
+
+```
+
+```{r}
+im_6 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_6[[2]]
+data <- im_6[[3]]
+
+```
+
+```{r}
+im_6 <- active_learning(data, 3, 12, c(), c())
+
+ixes <- im_6[[2]]
+data <- im_6[[3]]
+
+im_6[[1]]
+vals <- c(1,0,1,0,0,
+          0,1,0,0,0,
+          0,2,0,2,0)
+
+```
+
+```{r}
+im_7 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_7[[2]]
+data <- im_7[[3]]
+
+im_7[[1]]
+vals <- c(0,0,1,0,2,
+          0,0,0,2,0,
+          0,1,0,2,0)
+
+```
+
+```{r}
+im_8 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_8[[2]]
+data <- im_8[[3]]
+
+im_8[[1]]
+vals <- c(0,2,2,0,0,
+          0,0,0,0,1,
+          2,2,0,2,0)
+
+```
+
+```{r}
+im_9 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_9[[2]]
+data <- im_9[[3]]
+
+im_9[[1]]
+vals <- c(0,0,0,2,0,
+          0,0,2,1,1)
+    
+```
+
+```{r}
+im_10 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_10[[2]]
+data <- im_10[[3]]
+
+im_10[[1]]
+
+vals <- c(2,2,2,2,0,
+          2,0,0,0,0,
+          0,0,0,0,0)
+
+```
+
+```{r}
+im_11 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_11[[2]]
+data <- im_11[[3]]
+
+im_11[[1]]
+
+vals <- c(0,0,0,0,2,
+          1,2,0,2,0,
+          2,0,0,0,1)
+
+```
+
+```{r}
+im_12 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_12[[2]]
+data <- im_12[[3]]
+
+im_12[[1]]
+
+vals <- c(2,0,2,0,0,
+          0,2,0,2,2,
+          0,1,0,2,1)
+
+```
+
+```{r}
+im_13 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_13[[2]]
+data <- im_13[[3]]
+
+im_13[[1]]
+
+vals <- c(0,2,0,0,0,
+          0,2,0,0,2,
+          0,2,2,2,0)
+
+```
+
+```{r}
+im_14 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_14[[2]]
+data <- im_14[[3]]
+
+im_14[[1]]
+
+vals <- c(0,0,2,0,0,
+          1,2,0,0,2,
+          0,0,0,0,0)
+
+```
+
+```{r}
+im_15 <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im_15[[2]]
+data <- im_15[[3]]
+
+im_15[[1]]
+
+vals <- c(0,2,0,0,0,
+          0,0,0,0,2,
+          0,2,2,0,2)
+
+im <- active_learning(data, 3, 12, ixes, vals)
+
+ixes <- im[[2]]
+data <- im[[3]]
+```
+
+# Quick Extra Test - lower c
+```{r}
+test <- test[,-1]
+labeled <- data %>% filter(is.na(class)==FALSE)
+labeled <- labeled[,-6]
+test_data <- rbind(labeled, test)
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+test$preds <- preds
+write.csv(test, "one_m_res.csv")
+
+```
+
+#### Compare with old
+```{r}
+old_labeled <- read_csv("old/labeled.csv")
+old_labeled <- old_labeled[,-c(1:3)]
+test <- test[,-6]
+test_data <- rbind(old_labeled, test)
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(old_labeled),]
+unlabeled_dfm <-  mydfm[(nrow(old_labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+test$preds <- preds
+write.csv(test, "one_m_res.csv")
+```
+
+### Predict on rest of the 50,000, and then on rest of the unlabeled
+```{r}
+labeled <- data %>% filter(is.na(class)==FALSE)
+unlabeled <- data %>% filter(is.na(class)==TRUE)
+
+data <- rbind(labeled, unlabeled)
+corpus <- corpus(data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+unlabeled$preds <- preds
+
+write.csv(unlabeled, "small_unlabeled.csv")
+```
+
+# Predict on the rest
+```{r}
+unlabeled <- read_csv("unlabeled.csv")
+labeled <- data %>% filter(is.na(class)==FALSE)
+
+labeled <- labeled[,-6]
+unlabeled <- unlabeled[,-c(1,2,8)]
+
+data <- rbind(labeled, unlabeled)
+corpus <- corpus(data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+unlabeled$preds <- preds
+
+write.csv(unlabeled, "large_unlabeled.csv")
+write.csv(labeled, "labeled.csv")
+```
+
+# Predict on the duplicated
+```{r}
+labeled <- read_csv("labeled.csv")
+duplicated <- read_csv("duplicated.csv")
+duplicated <- duplicated[,-1]
+labeled <- labeled[,-1]
+
+duplicated <- duplicated[,c(1,5,2,3,4)]
+duplicated$class <- NA
+
+data <- rbind(labeled, duplicated)
+data$class <- as.factor(data$class)
+corpus <- corpus(data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+unlabeled_dfm <- dfm_subset(mydfm, is.na(mydfm$class))
+labeled_dfm <- dfm_subset(mydfm, !is.na(mydfm$class))
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+duplicated$class <- preds
+
+write.csv(duplicated, "duplicated.csv")
+```
+

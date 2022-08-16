@@ -1,0 +1,327 @@
+---
+title: "merging predictions"
+output: html_document
+date: '2022-07-21'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+labeled <- read_csv("labeled.csv")
+unlabeled_large <- read_csv("large_unlabeled.csv")
+unlabeled_small <- read_csv("small_unlabeled.csv")
+held_out <- read_csv("final_test.csv")
+duplicated <- read_csv("duplicated.csv")
+```
+```{r}
+unlabeled_large <- unlabeled_large[,-1]
+unlabeled_large$class <- unlabeled_large$preds
+unlabeled_large <- unlabeled_large[,-6]
+
+length(unique(unlabeled_large$date_time))
+```
+
+```{r}
+unlabeled_small$class <- unlabeled_small$preds
+unlabeled_small <- unlabeled_small[,-c(1,7,8)]
+
+length(unique(unlabeled_small$date_time))
+```
+
+```{r}
+library(dplyr)
+labeled <-labeled[,-1]
+labeled <- labeled %>% filter(is.na(Country)==FALSE)
+
+length(unique(labeled$date_time))
+```
+
+```{r}
+held_out <- held_out[,-1]
+
+length(unique(held_out$date_time))
+```
+
+```{r}
+duplicated <- duplicated[,-1]
+
+dates <- sort(unique(duplicated$date_time))
+numbers <- sort(unique(unlabeled_large$date_time))
+
+date_frame <- data.frame(dates, numbers)
+
+unlabeled_large <- merge(unlabeled_large, date_frame, by.x="date_time", by.y = "numbers", all.x=TRUE)
+
+unlabeled_small <- merge(unlabeled_small, date_frame, by.x="date_time", by.y = "numbers", all.x=TRUE)
+
+labeled <- merge(labeled, date_frame, by.x="date_time", by.y = "numbers", all.x=TRUE)
+
+held_out$date_time <- as.Date(held_out$date_time, format = "%d/%m/%Y")
+
+unlabeled_large <- unlabeled_large[,-1]
+colnames(unlabeled_large) <- c("text", "class", "Country", "my_id", "date_time")
+
+unlabeled_small <- unlabeled_small[,-1]
+colnames(unlabeled_small) <- c("text", "class", "Country", "my_id", "date_time")
+
+labeled <- labeled[,-1]
+colnames(labeled) <- c("text", "class", "Country", "my_id", "date_time")
+
+duplicated <- duplicated[,c(1,2,4,5,3)]
+```
+
+## Merge these together
+```{r}
+all_labels <- rbind(labeled, unlabeled_large, unlabeled_small, held_out, duplicated)
+
+#write.csv(all_labels, "all_labeled.csv")
+# give labels to the duplicated data
+
+all_labels %>%
+  count(Country)
+```
+
+```{r}
+grouped <- all_labels %>%
+  group_by(date_time, Country) %>%
+  add_count(class)
+grouped <- grouped %>%
+  group_by(date_time, Country) %>%
+  add_count(date_time)
+grouped <- grouped %>% distinct(Country, date_time, class, .keep_all = TRUE)
+
+grouped <- grouped %>%
+  arrange(date_time, Country)
+
+grouped$date_time <- as.Date(grouped$date_time)
+grouped$daily_prop <- grouped$n / grouped$nn
+
+test <- grouped %>% filter(Country == "AUS") %>% filter(class==1) 
+mean(test$daily_prop[1:7])
+##make 3 different sets 
+
+Dates <- seq.Date(from=as.Date("2020-04-01"), to = as.Date("2021-03-31"), by = "day")
+
+date_time <- c(Dates, Dates, Dates, Dates, Dates,Dates, Dates, Dates, Dates, Dates,Dates, Dates, Dates, Dates, Dates)
+Country <-c(rep("AUS", 1095),rep("CAN", 1095),rep("IRE", 1095),rep("NZ", 1095),rep("UK", 1095))
+
+classes <- c(rep(0,365), rep(1,365), rep(2,365))
+class <- c(classes, classes, classes, classes, classes)
+
+full_df <- data.frame(Country, date_time, class)
+
+full_df$n_class <- NA
+full_df$n_total <- NA
+
+for (i in 1:nrow(full_df)){
+  for (j in 1:nrow(grouped)){
+    if(full_df$Country[i] == grouped$Country[j] && full_df$date_time[i] == grouped$date_time[j] && full_df$class[i] == grouped$class[j]){
+      full_df$n_class[i] <- grouped$n[j]
+    }
+    if(full_df$Country[i] == grouped$Country[j] && full_df$date_time[i] == grouped$date_time[j]){
+      full_df$n_total[i] <- grouped$nn[j]
+    }
+  }
+}
+
+## we have the missing dates between 16 sept and 24th, so that needs to be an exception in the next part
+for (i in 1:nrow(full_df)){
+  if(is.na(full_df$n_class[i]) == TRUE){
+    full_df$n_class[i] <- 0
+  }
+}
+for (i in 1:nrow(full_df)){
+  if(is.na(full_df$n_total[i]) == TRUE){
+    full_df$n_class[i] <- NA
+  }
+}
+
+full_df$daily_prop <- full_df$n_class / full_df$n_total
+
+summ_stats <- full_df %>% group_by(Country, class) %>% summarise(mean(daily_prop, na.rm = TRUE))
+
+# giving the missing weeks average values
+for (i in 1:nrow(full_df)){
+  for(j in 1:nrow(summ_stats)){
+    if(is.na(full_df$daily_prop[i])==TRUE){
+      if(full_df$Country[i]== summ_stats$Country[j] && full_df$class[i]==summ_stats$class[j]){
+        full_df$daily_prop[i] <- summ_stats$`mean(daily_prop, na.rm = TRUE)`[j]
+      }
+    }
+  }
+}
+
+library(TTR)
+full_df <- full_df %>% group_by(Country, class) %>% mutate(fourteen_day =runMean(daily_prop, 14))
+
+write.csv(full_df, "twitter_analysis.csv")
+```
+
+```{r}
+library(ggplot2)
+full_df$class <- as.factor(full_df$class)
+
+aus <- full_df %>% filter(Country == "AUS") %>% filter(class !=0)
+ggplot(aus, aes(x=date_time, y=fourteen_day, colour=class)) +geom_line() + theme_classic() + labs(title = "Australia 14-day moving average") + ylab("Proportion of Tweets") + xlab("Date")
+
+can <- full_df %>% filter(Country == "CAN") %>% filter(class !=0)
+ggplot(can, aes(x=date_time, y=fourteen_day, colour=class)) +geom_line() + theme_classic() + labs(title = "Canada 14-day moving average") + ylab("Proportion of Tweets") + xlab("Date")
+
+ire <- full_df %>% filter(Country == "IRE") %>% filter(class !=0)
+ggplot(ire, aes(x=date_time, y=fourteen_day, colour=class)) +geom_line() + theme_classic() + labs(title = "Ireland 14-day moving average") + ylab("Proportion of Tweets") + xlab("Date")
+
+nz <- full_df %>% filter(Country == "NZ") %>% filter(class !=0)
+ggplot(nz, aes(x=date_time, y=fourteen_day, colour=class)) +geom_line() + theme_classic() + labs(title = "New Zealand 14-day moving average") + ylab("Proportion of Tweets") + xlab("Date")
+
+uk <- full_df %>% filter(Country == "UK") %>% filter(class !=0)
+ggplot(uk, aes(x=date_time, y=fourteen_day, colour=class)) +geom_line() + theme_classic() + labs(title = "United Kingdom 14-day moving average") + ylab("Proportion of Tweets") + xlab("Date")
+
+
+```
+
+## Some changes: 2 week average
+```{r}
+twitter_analysis <- read_csv("twitter_analysis.csv")
+```
+
+```{r}
+twitter_analysis$week_num <- strftime(twitter_analysis$date_time, format = "%V")
+twitter_analysis$week_num <- as.integer(twitter_analysis$week_num)
+for (i in 1:nrow(twitter_analysis)){
+  if(twitter_analysis$week_num[i] < 14){
+    twitter_analysis$week_num[i] <- twitter_analysis$week_num[i] + 53
+    
+  }
+}
+
+twitter_analysis$week_num <- twitter_analysis$week_num - 13
+```
+
+```{r}
+# change to every 2 weeks
+for (i in 1:nrow(twitter_analysis)){
+  if((twitter_analysis$week_num[i] %% 2)==0){
+    twitter_analysis$week_num[i] <- twitter_analysis$week_num[i] - 1
+  }
+}
+
+twitter_analysis <- twitter_analysis %>%
+  group_by(Country, class, week_num) %>%
+  mutate(two_week_n_class = sum(n_class, na.rm = TRUE)) %>%
+  mutate(two_week_n_total = sum(n_total, na.rm = TRUE))
+
+twitter_analysis$two_week_prop <- twitter_analysis$two_week_n_class / twitter_analysis$two_week_n_total
+```
+
+```{r}
+library(ggplot2)
+twitter_analysis$class <- as.factor(twitter_analysis$class)
+aus <- twitter_analysis %>% filter(Country == "AUS") %>% filter(class !=0)
+ggplot(aus, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "Australia 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+can <- twitter_analysis %>% filter(Country == "CAN") %>% filter(class !=0)
+ggplot(can, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "Canada 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+ire <- twitter_analysis %>% filter(Country == "IRE") %>% filter(class !=0)
+ggplot(ire, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "Ireland 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+nz <- twitter_analysis %>% filter(Country == "NZ") %>% filter(class !=0)
+ggplot(nz, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "New Zealand 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+uk <- twitter_analysis %>% filter(Country == "UK") %>% filter(class !=0)
+ggplot(uk, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "United Kingdom 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+
+```
+
+JUST ONE ROW PER 2 WEEKS
+```{r}
+twitter_analysis <- twitter_analysis %>%
+  arrange(desc(date_time))
+
+twitter_analysis <- twitter_analysis %>%
+  distinct(Country, class, week_num, .keep_all = TRUE)
+
+twitter_analysis <- twitter_analysis %>%
+  arrange(date_time)
+```
+
+
+```{r}
+library(ggplot2)
+twitter_analysis$class <- as.factor(twitter_analysis$class)
+aus <- twitter_analysis %>% filter(Country == "AUS") %>% filter(class !=0)
+ggplot(aus, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "Australia 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+can <- twitter_analysis %>% filter(Country == "CAN") %>% filter(class !=0)
+ggplot(can, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "Canada 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+ire <- twitter_analysis %>% filter(Country == "IRE") %>% filter(class !=0)
+ggplot(ire, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "Ireland 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+nz <- twitter_analysis %>% filter(Country == "NZ") %>% filter(class !=0)
+ggplot(nz, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "New Zealand 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+uk <- twitter_analysis %>% filter(Country == "UK") %>% filter(class !=0)
+ggplot(uk, aes(x=date_time, y=two_week_prop, colour=class)) +geom_line() + theme_classic() + labs(title = "United Kingdom 14-day average") + ylab("Proportion of Tweets") + xlab("Date")
+
+
+```
+
+Change to correct names and save
+```{r}
+for (i in 1:nrow(twitter_analysis)){
+  if(twitter_analysis$Country[i] == "AUS"){
+    twitter_analysis$Country[i] <- "Australia"
+  }
+  if(twitter_analysis$Country[i] == "CAN"){
+    twitter_analysis$Country[i] <- "Canada"
+  }
+  if(twitter_analysis$Country[i] == "IRE"){
+    twitter_analysis$Country[i] <- "Ireland"
+  }
+  if(twitter_analysis$Country[i] == "NZ"){
+    twitter_analysis$Country[i] <- "New Zealand"
+  }
+  if(twitter_analysis$Country[i] == "UK"){
+    twitter_analysis$Country[i] <- "United Kingdom"
+  }
+  
+}
+
+twitter_analysis <- twitter_analysis[,-c(1,8,9,10)]
+
+#write.csv(twitter_analysis, "two_week_twitter.csv")
+```
+
+```{r}
+twitter_analysis <- pivot_wider(twitter_analysis, names_from = class, values_from = two_week_prop)
+twitter_analysis <- twitter_analysis %>% filter(is.na(`0`)==TRUE)
+
+shift <- function(x, n){
+  c(x[-(seq(n))], rep(NA, n))
+}
+
+twitter_analysis$`2` <- shift(twitter_analysis$`2`, 1)
+twitter_analysis <- twitter_analysis %>% filter(is.na(`1`)==FALSE)
+
+twitter_analysis <- twitter_analysis[,c(1,2,9,10)]
+```
+
+
+## Merge with indicators
+```{r}
+regress <- merge(twitter_analysis, covid_indicators, by.x = c("Country", "date_time"), by.y = c("Country", "Date"), all.x = TRUE)
+```
+
+```{r}
+regress$stringency_date <- regress$date_time
+```
+
+```{r}
+write.csv(regress, "regression_dataframe.csv")
+```
+

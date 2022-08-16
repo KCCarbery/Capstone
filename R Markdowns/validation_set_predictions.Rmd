@@ -1,0 +1,132 @@
+---
+title: "predict on held out"
+output: html_document
+date: '2022-08-12'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## load data
+```{r}
+library(readr)
+library(quanteda)
+library(caret)
+library(e1071)
+labeled <- read_csv("labeled.csv")
+test <- read_csv("final_test.csv")
+```
+
+```{r}
+colnames(test)
+colnames(labeled)
+
+test_data <- rbind(labeled, test)
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+test$preds <- preds
+write.csv(test, "one_m_res.csv")
+
+```
+
+Different Countries
+```{r}
+test$class <- as.factor(test$class)
+uk <- test %>% dplyr::filter(Country == "UK")
+
+conf_matrix <- confusionMatrix(uk$preds, uk$class, mode = "everything")
+conf_matrix
+
+nrow(uk)
+```
+
+```{r}
+library(dplyr)
+aus <- test %>% filter(Country == "AUS")
+
+conf_matrix <- confusionMatrix(aus$preds, aus$class, mode = "everything")
+conf_matrix
+
+nrow(aus)
+```
+
+```{r}
+can <- test %>% filter(Country == "CAN")
+
+conf_matrix <- confusionMatrix(can$preds, can$class, mode = "everything")
+conf_matrix
+
+nrow(can)
+```
+
+```{r}
+ire <- test %>% filter(Country == "IRE")
+
+conf_matrix <- confusionMatrix(ire$preds, ire$class, mode = "everything")
+conf_matrix
+
+nrow(ire)
+```
+
+```{r}
+nz <- test %>% filter(Country == "NZ")
+
+conf_matrix <- confusionMatrix(nz$preds, nz$class, mode = "everything")
+conf_matrix
+
+nrow(nz)
+```
+
+```{r}
+test$date_time <- as.Date(test$date_time, "%d/%m/%Y")
+test <- test %>% arrange(date_time)
+
+```
+
+```{r}
+#cut into 5 slots over time
+test1 <- test[1:200,]
+test2 <- test[201:400,]
+test3 <- test[401:600,]
+test4 <- test[601:800,]
+test5 <- test[801:1000,]
+
+conf_matrix <- confusionMatrix(test1$preds, test1$class, mode = "everything")
+conf_matrix
+
+conf_matrix <- confusionMatrix(test2$preds, test2$class, mode = "everything")
+conf_matrix
+
+conf_matrix <- confusionMatrix(test3$preds, test3$class, mode = "everything")
+conf_matrix
+
+conf_matrix <- confusionMatrix(test4$preds, test4$class, mode = "everything")
+conf_matrix
+
+conf_matrix <- confusionMatrix(test5$preds, test5$class, mode = "everything")
+conf_matrix
+```
+

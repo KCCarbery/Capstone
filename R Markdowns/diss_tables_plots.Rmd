@@ -1,0 +1,233 @@
+---
+title: "diss plots"
+output: html_document
+date: '2022-07-14'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Table of the coverage by country
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+users <- read_csv("../twitter_coverage.csv")
+
+new_zealand <- read_csv("../country_data/new_zealand.csv")
+## Pre hydration
+hydrated <- read_csv("../country_data/final_data.csv")
+hydrated %>% filter(Country == "NZ")
+aus <- read.table("../tweet_ids/tweets_australia.txt")
+can <- read.table("../tweet_ids/tweets_canada.txt")
+ire <- read.table("../tweet_ids/tweets_ireland.txt")
+nz <- read.table("../tweet_ids/tweets_new_zealand.txt")
+uk1 <- read.table("../tweet_ids/tweets_uk_01_redo.txt")
+uk2 <- read.table("../tweet_ids/tweets_uk_02.txt")
+
+```
+
+```{r}
+library(dplyr)
+users <-users %>% 
+  filter(Country %in% c("Ireland", "Canada", "New Zealand", "Australia", "The United Kingdom"))
+
+aus_s <- nrow(hydrated %>%
+       filter(Country == "AUS"))
+can_s <- nrow(hydrated %>%
+       filter(Country == "CAN"))
+ire_s <- nrow(hydrated %>%
+       filter(Country == "IRE"))
+nz_s <- nrow(hydrated %>%
+       filter(Country == "NZ"))
+uk_s <- nrow(hydrated %>%
+       filter(Country == "UK"))
+
+aus_h <- nrow(aus)
+can_h <- nrow(can)
+ire_h <- nrow(ire)
+nz_h <- round(nrow(nz)*0.35)
+uk_h <- round(nrow(uk1)*0.35) + nrow(uk2)
+
+users$sampled <- c(ire_h, can_h, aus_h, nz_h, uk_h)
+users$hydrated <- c(ire_s, can_s, aus_s, nz_s, uk_s)
+
+```
+
+```{r}
+users$`Coverage in Sample` <- users$sampled / users$Users 
+users$`Coverage in Hydration` <- users$hydrated / users$Users 
+
+users
+```
+Lets find out how many were initially hydrated
+```{r}
+ireland <- read_csv("../tweet_ids/tweets_ireland.csv")
+```
+
+## hydrated 
+```{r}
+library(ggplot2)
+library(tidyr)
+hydrate <- users %>% select(Country, hydrated, sampled)
+pc_hydrated <- hydrate$hydrated / hydrate$sampled
+
+hydrate$sampled <- hydrate$sampled*0.6
+hydrate <- pivot_longer(hydrate, 2:3, names_to = "Set", values_to = "Count")
+require(scales)
+ggplot(hydrate, aes(x=Country, y = Count, fill = Set)) + geom_col(position = "dodge") + theme_classic() + labs(title = "Sampled Data vs Hydrated Tweets by COuntry") + scale_y_continuous(labels = comma) + scale_fill_manual(values = c("tomato1", "deepskyblue3"))
+```
+
+```{r}
+hydration_count <- hydrated %>%
+  count(date_time) %>%
+  select(date_time, n)
+
+hydration_count
+colnames(hydration_count) <- c("Date", "Count")
+ggplot(hydration_count, aes(x = Date, y = Count)) + geom_col(col = "deepskyblue3", fill = "deepskyblue3") + theme_classic()
+
+```
+
+## The sampled data
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(data.table)
+sampled_australia <- read_csv("../sampled_data/TBCOVaustralia.csv")
+sampled_canada <- read_csv("../sampled_data/TBCOVcanada.csv")
+sampled_ireland <- read_csv("../sampled_data/TBCOVireland.csv")
+sampled_new_zealand <- read_csv("../sampled_data/TBCOVnew_zealand.csv")
+sampled_uk_01 <- read_csv("../sampled_data/TBCOVuk_01.csv")
+sampled_uk_02 <- read_csv("../sampled_data/TBCOVuk_02.csv")
+
+random_sample <- function(data, proportion){
+  # finds the number of tweets to select to have 8%
+  n <- nrow(data)
+  s <- floor(proportion*n)
+    
+  # randomly samples from the indexes of the sample data
+  sample_ix <- sample(1:nrow(data), size = s)
+  
+  data <- data[sample_ix,]
+  
+  return(data)
+}
+
+sampled_uk_01 <- random_sample(sampled_uk_01, 0.35)
+
+sampled <- rbind(sampled_australia,sampled_canada,sampled_ireland,sampled_new_zealand,sampled_uk_01,sampled_uk_02)
+
+sample_count <- sampled %>%
+  count(date_time) %>%
+  select(date_time, n) %>%
+  filter(date_time > "2020-03-31") 
+sample_count
+
+# merge together
+date_count <- cbind(sample_count, hydration_count)
+date_count <- date_count[,-3]
+colnames(date_count) <- c("Date", "Sample", "Hydrated")
+date_count$Sample <- date_count$Sample*0.6
+
+date_count$Date <- as.IDate(date_count$Date)
+
+# first lets add for the dates that are missing
+date_count$Date
+
+Date <- c("2020-09-16", "2020-09-17","2020-09-18", "2020-09-19","2020-09-20", "2020-09-21","2020-09-22", "2020-09-23")
+Sample <- c(0,0,0,0,0,0,0,0)
+Hydrated <- c(0,0,0,0,0,0,0,0)
+
+missing_vals <- data.frame(Date, Sample, Hydrated)
+date_count1 <- date_count[1:168,]
+date_count2 <- date_count[169:nrow(date_count),]
+date_count <- rbind(date_count1, missing_vals,date_count2)
+
+date_count$seven_day_index <- c(0, rep(1:(nrow(date_count)-1)%/%7))
+
+week_count <- date_count %>%
+  group_by(seven_day_index) %>%
+  mutate(Hydrated_weekly = sum(Hydrated)) %>%
+  mutate(Sample_weekly = sum(Sample))
+
+week_count <- week_count %>%
+  select(Date, Hydrated_weekly, Sample_weekly)
+
+colnames(week_count) <- c("1", "Week Starting", "Hydrated Weekly", "Sampled Weekly")
+library(ggthemes)
+ggplot(week_count, aes()) + 
+  geom_col(aes(x=`Week Starting`, y=`Sampled Weekly`, fill = "Sampled"),alpha = 0.5) +
+  geom_col(aes(x=`Week Starting`, y=`Hydrated Weekly`, fill = "Hydrated"),alpha = 1) + theme_tufte() + labs(title = "Distribution of Sampled and Hydrated Data over time")
+
+
+```
+
+```{r}
+
+graph <- function(country, sampled, name){
+  sample_count <- sampled %>%
+    count(date_time) %>%
+    filter(date_time > "2020-03-31") 
+  sample_count
+  
+  hydration_count <- hydrated %>%
+    filter(Country == country) %>%
+    count(date_time) %>%
+    select(date_time, n)
+
+  hydration_count
+  colnames(hydration_count) <- c("Date", "Count")
+
+  # merge together
+  date_count <- cbind(sample_count, hydration_count)
+  date_count <- date_count[,-3]
+  colnames(date_count) <- c("Date", "Sample", "Hydrated")
+  date_count$Sample <- date_count$Sample*0.6
+
+  date_count$Date <- as.IDate(date_count$Date)
+
+  #  first lets add for the dates that are missing
+  date_count$Date
+
+  Date <- c("2020-09-16", "2020-09-17","2020-09-18", "2020-09-19","2020-09-20", "2020-09-21","2020-09-22", "2020-09-23")
+  Sample <- c(0,0,0,0,0,0,0,0)
+  Hydrated <- c(0,0,0,0,0,0,0,0)
+
+  missing_vals <- data.frame(Date, Sample, Hydrated)
+  date_count1 <- date_count[1:168,]
+  date_count2 <- date_count[169:nrow(date_count),]
+  date_count <- rbind(date_count1, missing_vals,date_count2)
+
+  date_count$seven_day_index <- c(0, rep(1:(nrow(date_count)-1)%/%7))
+
+  week_count <- date_count %>%
+    group_by(seven_day_index) %>%
+    mutate(Hydrated_weekly = sum(Hydrated)) %>%
+    mutate(Sample_weekly = sum(Sample))
+
+  week_count <- week_count %>%
+    select(Date, Hydrated_weekly, Sample_weekly)
+
+  colnames(week_count) <- c("1", "Week Starting", "Hydrated Weekly", "Sampled Weekly")
+  library(ggthemes)
+  ggplot(week_count, aes()) + 
+    geom_col(aes(x=`Week Starting`, y=`Sampled Weekly`, fill = "Sampled"),alpha = 0.5) +
+    geom_col(aes(x=`Week Starting`, y=`Hydrated Weekly`, fill = "Hydrated"),alpha = 1) + theme_tufte() + labs(title = paste("Distribution of Sampled and Hydrated Data:", name))
+
+  }
+
+
+```
+
+```{r}
+sampled_uk <- rbind(sampled_uk_01,sampled_uk_02)
+graph("AUS", sampled_australia, "Australia")
+graph("CAN", sampled_canada, "Canada")
+graph("IRE", sampled_ireland, "Ireland")
+graph("NZ", sampled_new_zealand, "New Zealand")
+graph("UK", sampled_uk, "United Kingdom")
+```
+
