@@ -64,5 +64,5 @@ ggplot(covid_indicators, aes(x= Date, y = relative_stringency, colour = Country)
 
 
 ```{r}
-write.csv(covid_indicators, "covid_indicators.csv")
+write.csv(covid_indicators, "../Data/covid_indicators.csv")
 ```

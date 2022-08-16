@@ -1,0 +1,143 @@
+---
+title: "making control variable"
+output: html_document
+date: '2022-07-27'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+```
+
+UN have a regional group: Western European and Others Group includes all 5 countries
+```{r}
+UN_west <- c("Andorra","Austria","Belgium","Denmark", "Finland", "France","Germany", "Greece","Iceland","Ireland","Italy","Liechtenstein","Luxembourg","Malta","Monaco","Netherlands","Norway","Portugal","San Marino","Spain","Sweden","Switzerland","Turkey","United Kingdom", "Australia", "Israel", "New Zealand", "United States")
+```
+
+```{r}
+stringency <- read.csv("../Data/covid-stringency-index.csv")
+```
+
+```{r}
+stringency <- stringency %>%
+  rename(Date = Day) %>%
+  rename(Country = Entity) 
+
+stringency$Date <- as.Date(stringency$Date,
+  format = "%Y-%m-%d")
+
+stringency <- stringency %>% filter(Country %in% UN_west)
+```
+
+```{r}
+openness <- read.csv("../Data/riskindex_timeseries_latest.csv")
+```
+
+```{r}
+library(dplyr)
+openness <- openness[,c(3,4,10)]
+
+openness$Date <- as.Date(openness$Date,
+  format = "%d/%m/%Y")
+
+#Rescale 
+openness$openness_risk <- openness$openness_risk*100
+```
+
+```{r}
+openness <- openness %>%
+  rename(Country = CountryName)
+openness <- openness %>% filter(Country %in% UN_west)
+```
+
+```{r}
+covid_indicators <- merge(stringency, openness)
+covid_indicators <- covid_indicators %>% filter(Date > "2020-03-31")
+covid_indicators$relative_stringency <-  covid_indicators$stringency_index - covid_indicators$openness_risk 
+```
+
+```{r}
+ire_control <- covid_indicators %>% 
+  filter(Country != "Ireland") %>%
+  group_by(Date) %>%
+  summarise(mean(relative_stringency))
+
+can_control <- covid_indicators %>% 
+  filter(Country != "Canada") %>%
+  group_by(Date) %>%
+  summarise(mean(relative_stringency))
+
+aus_control <- covid_indicators %>% 
+  filter(Country != "Australia") %>%
+  group_by(Date) %>%
+  summarise(mean(relative_stringency))
+
+nz_control <- covid_indicators %>% 
+  filter(Country != "New Zealand") %>%
+  group_by(Date) %>%
+  summarise(mean(relative_stringency))
+
+uk_control <- covid_indicators %>% 
+  filter(Country != "United Kingdom") %>%
+  group_by(Date) %>%
+  summarise(mean(relative_stringency))
+```
+
+```{r}
+indicators <- read_csv("covid_indicators.csv")
+```
+
+```{r}
+indicators$others_stringency <- NA
+for (i in 1:nrow(indicators)){
+  for (j in 1:nrow(ire_control)){
+    if (indicators$Country[i]=="Ireland" && indicators$Date[i]== ire_control$Date[j]){
+      indicators$others_stringency[i] <- ire_control$`mean(relative_stringency)`[j]
+    }
+  }
+}
+
+for (i in 1:nrow(indicators)){
+  for (j in 1:nrow(can_control)){
+    if (indicators$Country[i]=="Canada" && indicators$Date[i]== can_control$Date[j]){
+      indicators$others_stringency[i] <- can_control$`mean(relative_stringency)`[j]
+    }
+  }
+}
+
+for (i in 1:nrow(indicators)){
+  for (j in 1:nrow(aus_control)){
+    if (indicators$Country[i]=="Australia" && indicators$Date[i]== aus_control$Date[j]){
+      indicators$others_stringency[i] <- aus_control$`mean(relative_stringency)`[j]
+    }
+  }
+}
+
+for (i in 1:nrow(indicators)){
+  for (j in 1:nrow(nz_control)){
+    if (indicators$Country[i]=="New Zealand" && indicators$Date[i]== nz_control$Date[j]){
+      indicators$others_stringency[i] <- nz_control$`mean(relative_stringency)`[j]
+    }
+  }
+}
+
+for (i in 1:nrow(indicators)){
+  for (j in 1:nrow(uk_control)){
+    if (indicators$Country[i]=="United Kingdom" && indicators$Date[i]== uk_control$Date[j]){
+      indicators$others_stringency[i] <- uk_control$`mean(relative_stringency)`[j]
+    }
+  }
+}
+```
+
+```{r}
+write.csv(indicators, "covid_indicators.csv")
+```
+
