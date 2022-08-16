@@ -11,22 +11,59 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(readr)
 library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
 options(scipen = "100")
-nz_data <- read_csv("../country_data/new_zealand.csv")
-nz_data$Country <- "NZ"
-training_set <- read_csv("../training_sets/train_4000.csv")
+distinct_data_1 <- read_csv("distinct_data_1.csv")
+training <- read_csv("train_4000.csv")
 ```
 #### Merge
 ```{r}
 library(dplyr)
-options(scipen = "100")
-nz_data <- nz_data %>% filter(lang.y == "en")
-sample_merge <- merge(nz_data, training_set, all = TRUE, by.x = "text", by.y = "text")
+# all_data <- all_data %>%
+#   select(c(text, date_time, Country))
+# head(all_data)
+# 
+# all_data$my_id <- 1:nrow(all_data) 
+# all_data$class <- NA
+# 
+# distinct_data<- all_data %>% 
+#   distinct(text, .keep_all = TRUE)
+# 
+# ids <- distinct_data$my_id
+# duplicate <- all_data %>%
+#   filter(!my_id %in% ids)
+# write_csv(duplicate, "duplicated.csv")
+# 
+# #ok, lets split this up into a few different sets
+# distinct_data <- distinct_data[sample(1:nrow(distinct_data)),]
+# 
+# distinct_data_1 <- distinct_data[1:100000,]
+# distinct_data_2 <- distinct_data[100001:300000,]
+# distinct_data_3 <- distinct_data[300001:600000,]
+# distinct_data_4 <- distinct_data[600001:1000000,]
+# distinct_data_5 <- distinct_data[1000000:nrow(distinct_data),]
+# 
+# write.csv(distinct_data_1, "distinct_data_1.csv")
+# write.csv(distinct_data_2, "distinct_data_2.csv")
+# write.csv(distinct_data_3, "distinct_data_3.csv")
+# write.csv(distinct_data_4, "distinct_data_4.csv")
+# write.csv(distinct_data_5, "distinct_data_5.csv")
+```
 
-sample_merge <- sample_merge %>%
-  select(c(text, class, date_time, Country))
-head(sample_merge)
 
+```{r}
+library(dplyr)
+training <- training %>%
+  select(c(text, class))
+
+
+distinct_data_1 <- distinct_data_1[,-1]
+training$Country <- NA
+training$date_time <- NA
+training$my_id <- NA
+sample_merge <- rbind(training, distinct_data_1)
 nrow(sample_merge %>% filter(is.na(class)==TRUE))
 nrow(sample_merge %>% filter(is.na(class)==FALSE))
 ```
@@ -53,6 +90,9 @@ active_learning <- function(data, min_freq, C, ixes, vals_1, vals_2, vals_3){
       data$class[ix_3[i]] <- vals_3[i]
       }
   }
+  
+  # save csv of the new labels 
+  write.csv(data, "newest_labeled_1m.csv")
   
   # creating a variable with the index
   data$index <- 1:nrow(data)
@@ -88,11 +128,16 @@ active_learning <- function(data, min_freq, C, ixes, vals_1, vals_2, vals_3){
   sorted_2 <- sort(dist_2, index.return = TRUE)
   sorted_3 <- sort(dist_3, index.return = TRUE)
   
-  index_1 <- sorted_1$ix[1:10]
-  index_2 <- sorted_2$ix[1:10]
-  index_3 <- sorted_3$ix[1:10]
-
-  unlabeled_text <- sample_merge %>%
+  # saving uncertainty values
+  uncert_1 <- sum(sorted_1$x)
+  uncert_2 <- sum(sorted_2$x)
+  uncert_3 <- sum(sorted_3$x)
+  
+  index_1 <- sorted_1$ix[1:15]
+  index_2 <- sorted_2$ix[1:15]
+  index_3 <- sorted_3$ix[1:15]
+  
+  unlabeled_text <- data %>%
     filter(is.na(class)==TRUE)
   
   ix_1 <- unlabeled_text$index[index_1]
@@ -101,19 +146,37 @@ active_learning <- function(data, min_freq, C, ixes, vals_1, vals_2, vals_3){
   
   texts <- list(unlabeled_text$text[index_1],unlabeled_text$text[index_2],unlabeled_text$text[index_3]) 
   indexes <- list(ix_1, ix_2, ix_3)
+  uncertainty_sum <- uncert_1 + uncert_2+uncert_3
+  print(uncertainty_sum)
   
   return(list(texts, indexes, data))
 }
-go_1 <- active_learning(sample_merge, 3, 12, list(),c(),c(),c())
+
+```
+
+```{r}
+labeled <- read_csv("labeled.csv")
+unlabeled <- read_csv("small_unlabeled.csv")
+labeled <- labeled[,-1]
+unlabeled <- unlabeled[,-c(1,7,8)]
+
+data <- rbind(labeled, unlabeled)
+go_1 <- active_learning(data, 3, 12, list(),c(),c(),c())
 # 53686 length
 
 ixes <- go_1[[2]]
 data <- go_1[[3]]
 
+```
+
+```{r}
+
 ## run a k-fold CV and report F1s
 ten_fold_SVM <- function(data, min_freq, C){
+  set.seed(1)
   # transform response variable to factor
   data$class <- factor(data$class)
+  data <- data %>% filter(is.na(class) == FALSE)
   
   corpus <- corpus(data, text_field="text") 
   toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
@@ -121,12 +184,9 @@ ten_fold_SVM <- function(data, min_freq, C){
   toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
   mydfm <- dfm(toks_ngram, tolower=TRUE)
   mydfm <- dfm_trim(mydfm, min_docfreq = min_freq)
-
-  # Separate labeled documents from unlabeled documents 
-  labeled <- dfm_subset(mydfm, !is.na(mydfm$class))
   
   # randomly sorting the data.
-  random_order <- labeled[sample(1:nrow(labeled)),]
+  random_order <- mydfm[sample(1:nrow(mydfm)),]
   
   # taking the length of the dataframe
   n <- nrow(random_order)
@@ -169,18 +229,18 @@ ten_fold_SVM <- function(data, min_freq, C){
   return(results)
 } 
 
-ten_fold_SVM(data, 3, 12)
+#ten_fold_SVM(data, 3, 12)
 ```
 
 ```{r}
 go_1[[1]][[1]]
-vals_1 <- c(2,0,0,0,0,0,0,0,0,2)
+vals_1 <- c(0,0,0,0,1,0,0,1,0,0)
 
 go_1[[1]][[2]]
-vals_2 <- c(0,0,0,0,1,0,0,0,2,1)
+vals_2 <- c(0,0,1,0,0,0,0,0,2,1)
 
 go_1[[1]][[3]]
-vals_3 <- c(0,2,0,0,0,0,0,0,0,0)
+vals_3 <- c(0,0,0,0,0,0,0,0,0,0)
 
 go_2 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
 # 53656 length
@@ -189,5 +249,2053 @@ ixes <- go_2[[2]]
 data <- go_2[[3]]
 
 ten_fold_SVM(data, 3, 12)
+```
+
+```{r}
+
+go_2[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,2,0,0,0)
+
+go_2[[1]][[2]]
+vals_2 <- c(0,1,0,0,0,0,2,0,1,0)
+
+go_2[[1]][[3]]
+vals_3 <- c(0,0,2,0,0,2,0,0,0,0)
+
+# load in newest labeled data bc of crashing 
+newest <- read_csv("newest_labeled.csv")
+go_3 <- active_learning(data, 3, 12, list(),c(),c(),c())
+
+
+ixes <- go_3[[2]]
+data <- go_3[[3]]
+
+ten_fold_SVM(data, 3, 12)
+```
+
+
+```{r}
+go_3[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_3[[1]][[2]]
+vals_2 <- c(0,1,0,0,0,0,0,0,0,1)
+
+go_3[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,0,0,2,2,2)
+
+go_4 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+ixes <- go_4[[2]]
+data <- go_4[[3]]
+
+ten_fold_SVM(data, 3, 12)
+```
+
+```{r}
+go_4[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_4[[1]][[2]]
+vals_2 <- c(1,0,2,0,0,0,0,0,0,0)
+
+go_4[[1]][[3]]
+vals_3 <- c(0,0,2,0,0,0,0,0,0,2)
+
+go_5 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+ixes <- go_5[[2]]
+data <- go_5[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+```{r}
+go_5[[1]][[1]]
+vals_1 <- c(0,1,0,0,0,0,0,0,0,0)
+
+go_5[[1]][[2]]
+vals_2 <- c(0,0,1,1,0,1,0,1,0,0)
+
+go_5[[1]][[3]]
+vals_3 <- c(2,0,1,0,0,0,1,0,0,0)
+
+go_6 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+ixes <- go_6[[2]]
+data <- go_6[[3]]
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+```{r}
+ixes <- go_6[[2]]
+data <- go_6[[3]]
+go_6[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_6[[1]][[2]]
+vals_2 <- c(0,1,1,0,0,2,0,0,0,0)
+
+go_6[[1]][[3]]
+vals_3 <- c(0,0,1,0,0,0,0,0,0,0)
+
+go_7 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+```{r}
+
+ixes <- go_7[[2]]
+data <- go_7[[3]]
+
+go_7[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_7[[1]][[2]]
+vals_2 <- c(1,0,1,0,1,0,2,0,0,0)
+
+go_7[[1]][[3]]
+vals_3 <- c(0,1,0,0,2,0,0,1,1,0)
+
+go_8 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+```{r}
+
+ixes <- go_8[[2]]
+data <- go_8[[3]]
+
+go_8[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_8[[1]][[2]]
+vals_2 <- c(1,0,0,0,0,0,2,0,0,0)
+
+go_8[[1]][[3]]
+vals_3 <- c(0,1,0,0,0,0,2,2,0,2)
+
+go_9 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+
+```{r}
+
+ixes <- go_9[[2]]
+data <- go_9[[3]]
+
+go_9[[1]][[1]]
+vals_1 <- c(2,0,0,0,0,0,0,0,0,0)
+
+go_9[[1]][[2]]
+vals_2 <- c(1,1,1,0,0,1,0,2,0,0)
+
+go_9[[1]][[3]]
+vals_3 <- c(0,0,2,0,0,0,0,0,2,0)
+
+go_10 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+
+```{r}
+ixes <- go_10[[2]]
+data <- go_10[[3]]
+
+go_10[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_10[[1]][[2]]
+vals_2 <- c(1,0,0,0,0,0,0,0,0,0)
+
+go_10[[1]][[3]]
+vals_3 <- c(0,0,0,1,2,0,2,0,0,0)
+
+go_11 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+# 53656 length
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+
+```
+
+
+### end of day 1 100 tweet sample
+```{r}
+# data <- go_11[[3]]
+# 
+# unlabeled <- data %>% filter(is.na(class)==TRUE)
+# unlabeled_sample <- unlabeled[sample(100),]
+# 
+# write.csv(unlabeled_sample, "day_1_test.csv")
+
+unlabeled <- read_csv("day_1_test.csv")
+
+labeled <- newest %>%
+  filter(is.na(class)==FALSE)
+
+test_data <- rbind(labeled, unlabeled)
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 2)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:4245,]
+unlabeled_dfm <-  mydfm[4246:4345,]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+      
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+```
+
+## Add to labeled set and save as latest dataset
+```{r}
+for (i in 1:nrow(newest)){
+  for (j in 1:nrow(unlabeled)){
+    if(newest$text[i]==unlabeled$text[j]){
+      newest$class[i] <- unlabeled$class[j]
+    }
+  }
+
+}
+
+newest %>% filter(is.na(class)==FALSE)
+
+write.csv(newest, "newest_labeled.csv")
+```
+
+# Day 2
+```{r}
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+options(scipen = "100")
+distinct_data_1 <- read_csv("newest_labeled.csv")
+distinct_data_2 <- read_csv("distinct_data_2.csv")
+training <- read_csv("train_4000.csv")
+```
+
+```{r}
+library(dplyr)
+distinct_data_1 <- distinct_data_1[,-c(1,2,8)]
+distinct_data_2 <- distinct_data_2[,-1]
+sample_merge <- rbind(distinct_data_1, distinct_data_2)
+nrow(sample_merge %>% filter(is.na(class)==TRUE))
+nrow(sample_merge %>% filter(is.na(class)==FALSE))
+```
+
+```{r}
+go_12 <- active_learning(sample_merge, 3, 12, list(),c(),c(),c())
+
+ixes <- go_12[[2]]
+data <- go_12[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_12[[1]][[1]]
+vals_1 <- c(0,0,0,2,0,0,0,0,0,0)
+
+go_12[[1]][[2]]
+vals_2 <- c(0,0,1,1,0,0,0,0,0,0)
+
+go_12[[1]][[3]]
+vals_3 <- c(0,2,0,0,0,0,0,2,0,2)
+
+
+```
+
+```{r}
+go_13 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_13[[2]]
+data <- go_13[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_13[[1]][[1]]
+vals_1 <- c(1,0,0,0,0,0,1,0,0,0)
+
+go_13[[1]][[2]]
+vals_2 <- c(1,0,2,0,2,0,0,1,0,1)
+
+go_13[[1]][[3]]
+vals_3 <- c(0,1,0,0,0,0,0,0,0,0)
+
+
+```
+
+
+```{r}
+go_14 <- active_learning(data, 3, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_14[[2]]
+data <- go_14[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_14[[1]][[1]]
+vals_1 <- c(0,1,0,0,0,0,0,0,0,0)
+
+go_14[[1]][[2]]
+vals_2 <- c(0,0,1,1,1,0,2,0,0,0)
+
+go_14[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,0,0,0,0,0)
+
+```
+
+```{r}
+data <- read_csv("newest_labeled.csv")
+go_15 <- active_learning(data, 3, 12, list(), c(), c(), c())
+
+ixes <- go_15[[2]]
+data <- go_15[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_15[[1]][[1]]
+vals_1 <- c(1,1,0,0,0,0,0,2,0,0)
+
+go_15[[1]][[2]]
+vals_2 <- c(1,1,0,0,0,1,1,0,0,0)
+
+go_15[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,0,0,0,2,2)
+
+
+```
+
+
+```{r}
+go_16 <- active_learning(data, 3, 12,ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_16[[2]]
+data <- go_16[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_16[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_16[[1]][[2]]
+vals_2 <- c(0,0,1,1,0,0,1,0,1,0)
+
+go_16[[1]][[3]]
+vals_3 <- c(0,0,2,0,0,0,1,0,2,0)
+
+
+```
+
+```{r}
+go_17 <- active_learning(data, 3, 12,ixes, vals_1, vals_2, vals_3)
+
+
+ixes <- go_17[[2]]
+data <- go_17[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_17[[1]][[1]]
+vals_1 <- c(0,0,0,0,2,0,0,2,0,0)
+
+go_17[[1]][[2]]
+vals_2 <- c(0,1,1,1,0,1,1,0,0,0)
+
+go_17[[1]][[3]]
+vals_3 <- c(0,0,0,0,2,0,0,0,0,0)
+
+
+```
+
+```{r}
+go_18 <- active_learning(data, 3, 12,ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_18[[2]]
+data <- go_18[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_18[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,1,0,0,0,0)
+
+go_18[[1]][[2]]
+vals_2 <- c(0,1,0,0,0,1,1,0,0,0)
+
+go_18[[1]][[3]]
+vals_3 <- c(0,0,1,2,0,2,0,2,0,0)
+
+
+```
+
+```{r}
+go_19 <- active_learning(data, 3, 12,ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_19[[2]]
+data <- go_19[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_19[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_19[[1]][[2]]
+vals_2 <- c(1,0,0,0,0,2,0,0,0,0)
+
+go_19[[1]][[3]]
+vals_3 <- c(2,2,2,0,0,2,0,1,0,0)
+
+
+```
+
+```{r}
+go_20 <- active_learning(data, 3, 12,ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_20[[2]]
+data <- go_20[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_20[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_20[[1]][[2]]
+vals_2 <- c(0,0,0,0,0,0,1,1,0,0)
+
+go_20[[1]][[3]]
+vals_3 <- c(2,0,2,0,0,0,0,2,0,2)
+
+
+```
+
+```{r}
+go_21 <- active_learning(data, 3, 12,ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_21[[2]]
+data <- go_21[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+```
+
+# Time for another test
+```{r}
+data <- go_21[[3]]
+
+unlabeled <- data %>% filter(is.na(class)==TRUE)
+# randomly sorting the data.
+random_order <- unlabeled[sample(1:nrow(unlabeled)),]
+random_order <- random_order[1:100,]
+write.csv(random_order, "day_2_2_test.csv")
+
+unlabeled <- read_csv("day_2_test.csv")
+
+labeled <- data %>%
+  filter(is.na(class)==FALSE)
+unlabeled <- unlabeled[,-2]
+test_data <- rbind(labeled, unlabeled)
+
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 2)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+      
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+```
+
+
+## We're seeing an improvement, so we add more data
+```{r}
+for (i in 1:nrow(data)){
+  for (j in 1:nrow(unlabeled)){
+    if(data$text[i]==unlabeled$text[j]){
+      data$class[i] <- unlabeled$class[j]
+    }
+  }
+
+}
+
+data %>% filter(is.na(class)==FALSE)
+
+write.csv(data, "newest_labeled.csv")
+```
+
+# Day 3
+```{r}
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+options(scipen = "100")
+distinct_data_1 <- read_csv("newest_labeled.csv")
+distinct_data <- read_csv("distinct_data_3.csv")
+```
+```{r}
+library(dplyr)
+distinct_data_1 <- distinct_data_1[,-c(1,2,8)]
+distinct_data <- distinct_data[,-1]
+sample_merge <- rbind(distinct_data_1, distinct_data)
+nrow(sample_merge %>% filter(is.na(class)==TRUE))
+nrow(sample_merge %>% filter(is.na(class)==FALSE))
+```
+
+```{r}
+go_22 <- active_learning(sample_merge, 4, 12, list(),c(),c(),c())
+
+ixes <- go_22[[2]]
+data <- go_22[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_22[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_22[[1]][[2]]
+vals_2 <- c(1,0,1,0,0,0,0,0,0,0)
+
+go_22[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,2,0,0,0,0)
+
+
+```
+
+```{r}
+go_23 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_23[[2]]
+data <- go_23[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_23[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_23[[1]][[2]]
+vals_2 <- c(1,0,1,1,0,1,0,1,0,1)
+
+go_23[[1]][[3]]
+vals_3 <- c(0,0,0,0,2,0,0,1,0,0)
+
+
+```
+
+```{r}
+go_24 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_24[[2]]
+data <- go_24[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_24[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,1,0,2,0,0)
+
+go_24[[1]][[2]]
+vals_2 <- c(0,0,0,0,1,1,0,1,0,0)
+
+go_24[[1]][[3]]
+vals_3 <- c(0,0,0,2,0,0,0,2,0,0)
+
+
+```
+
+```{r}
+# for tomorrow
+#load the data and continue
+
+data <- read_csv("newest_labeled.csv")
+go_25 <- active_learning(data, 4, 12, list(), c(), c(), c())
+
+ixes <- go_25[[2]]
+data <- go_25[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_25[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_25[[1]][[2]]
+vals_2 <- c(1,0,0,0,1,1,0,0,1,1)
+
+go_25[[1]][[3]]
+vals_3 <- c(0,2,2,0,0,2,2,1,0,0)
+```
+
+```{r}
+
+go_26 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_26[[2]]
+data <- go_26[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_26[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_26[[1]][[2]]
+vals_2 <- c(0,0,0,2,0,1,0,1,0,0)
+
+go_26[[1]][[3]]
+vals_3 <- c(0,0,0,2,2,0,0,0,0,0)
+```
+
+```{r}
+
+go_27 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_27[[2]]
+data <- go_27[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_27[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_27[[1]][[2]]
+vals_2 <- c(0,0,0,1,0,0,0,0,0,2)
+
+go_27[[1]][[3]]
+vals_3 <- c(0,0,0,0,2,0,0,0,0,2)
+```
+
+
+```{r}
+
+go_28 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_28[[2]]
+data <- go_28[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_28[[1]][[1]]
+vals_1 <- c(0,1,0,0,0,0,0,0,0,0)
+
+go_28[[1]][[2]]
+vals_2 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_28[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,0,0,1,0,0)
+```
+
+```{r}
+
+go_29 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_29[[2]]
+data <- go_29[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_29[[1]][[1]]
+vals_1 <- c(0,0,0,0,1,0,0,0,0,0)
+
+go_29[[1]][[2]]
+vals_2 <- c(1,1,1,1,0,0,0,0,0,1)
+
+go_29[[1]][[3]]
+vals_3 <- c(0,0,0,2,2,0,2,0,0,2)
+```
+
+```{r}
+
+go_30 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_30[[2]]
+data <- go_30[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_30[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,2,0)
+
+go_30[[1]][[2]]
+vals_2 <- c(1,1,1,0,0,0,2,0,1,0)
+
+go_30[[1]][[3]]
+vals_3 <- c(2,0,0,0,2,0,0,0,0,0)
+```
+
+```{r}
+go_31 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_31[[2]]
+data <- go_31[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_31[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_31[[1]][[2]]
+vals_2 <- c(0,1,0,0,0,1,0,1,2,0)
+
+go_31[[1]][[3]]
+vals_3 <- c(0,2,1,0,2,0,0,0,2,2)
+
+#saving these new labels
+go <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+```
+
+## Another Test
+```{r}
+data <- read_csv("newest_labeled.csv")
+
+unlabeled <- data %>% filter(is.na(class)==TRUE)
+labeled <- data %>% filter(is.na(class)==FALSE)
+
+# this time, we want to split it ad keep 300 obs separate, in case we need to continue improving at this level
+random_order <- unlabeled[sample(1:nrow(unlabeled)),]
+test_data <- random_order[1:300,]
+unlabeled <- random_order[301:nrow(random_order),]
+
+write.csv(test_data, "day_3_test.csv")
+
+# save the rest back into newest labeled
+newest <- rbind(labeled, unlabeled)
+write.csv(newest, "newest_labeled.csv")
+```
+
+
+```{r}
+unlabeled <- read_csv("day_3_test.csv")
+
+labeled <- newest %>%
+  filter(is.na(class)==FALSE)
+
+
+unlabeled <- unlabeled[,-(1:3)]
+labeled <- labeled[,-(1:2)]
+test_data <- rbind(labeled, unlabeled)
+
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 2)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+```
+
+we will hold out this data and try again after another round
+
+```{r}
+data <- read_csv("newest_labeled.csv")
+go_32 <- active_learning(data, 4, 12, list(), c(),c(),c())
+
+ixes <- go_32[[2]]
+data <- go_32[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_32[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_32[[1]][[2]]
+vals_2 <- c(0,0,0,0,0,0,1,0,0,0)
+
+go_32[[1]][[3]]
+vals_3 <- c(0,0,0,2,0,2,0,0,2,0)
+
+```
+
+```{r}
+#saving these new labels
+go_33 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_33[[2]]
+data <- go_33[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_33[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_33[[1]][[2]]
+vals_2 <- c(0,1,0,0,1,0,2,1,0,2)
+
+go_33[[1]][[3]]
+vals_3 <- c(0,0,0,2,0,0,0,0,1,0)
+
+```
+
+
+
+
+```{r}
+#saving these new labels
+go_34 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_34[[2]]
+data <- go_34[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_34[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,2,0,0,0,0)
+
+go_34[[1]][[2]]
+vals_2 <- c(2,0,1,1,0,1,0,0,0,2)
+
+go_34[[1]][[3]]
+vals_3 <- c(2,2,2,0,0,0,0,0,0,0)
+
+```
+
+
+```{r}
+#saving these new labels
+go_35 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_35[[2]]
+data <- go_35[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_35[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,0,0,0,0,0)
+
+go_35[[1]][[2]]
+vals_2 <- c(0,0,0,0,0,0,0,0,0,2)
+
+go_35[[1]][[3]]
+vals_3 <- c(1,0,0,0,2,2,0,0,0,0)
+
+```
+gonna change it up and mark 15 per category now
+```{r}
+#saving these new labels
+go_36 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_36[[2]]
+data <- go_36[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_36[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_36[[1]][[2]]
+vals_2 <- c(0,0,0,2,1,
+            1,0,0,0,0,
+            0,0,0,0,0)
+
+go_36[[1]][[3]]
+vals_3 <- c(2,0,0,0,0,
+            0,0,0,0,0,
+            0,2,2,0,2)
+
+```
+
+
+```{r}
+#saving these new labels
+go_37 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_37[[2]]
+data <- go_37[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_37[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_37[[1]][[2]]
+vals_2 <- c(1,1,0,0,1,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_37[[1]][[3]]
+vals_3 <- c(0,0,2,2,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+```
+
+```{r}
+#saving these new labels
+go_38 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_38[[2]]
+data <- go_38[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_38[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_38[[1]][[2]]
+vals_2 <- c(0,0,0,0,0,
+            0,1,1,0,1,
+            0,0,1,0,1)
+
+go_38[[1]][[3]]
+vals_3 <- c(0,2,0,0,0,
+            2,1,2,2,2,
+            0,0,2,2,2)
+
+```
+
+```{r}
+#saving these new labels
+go_39 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_39[[2]]
+data <- go_39[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_39[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_39[[1]][[2]]
+vals_2 <- c(0,0,1,0,0,
+            0,0,1,0,1,
+            1,0,0,1,1)
+
+go_39[[1]][[3]]
+vals_3 <- c(0,2,2,0,0,
+            0,2,0,0,0,
+            0,0,0,0,0)
+
+go <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+```
+
+```{r}
+data <- read_csv("newest_labeled.csv")
+go_40 <- active_learning(data, 4, 12, list(), c(),c(),c())
+
+ixes <- go_40[[2]]
+data <- go_40[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_40[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_40[[1]][[2]]
+vals_2 <- c(1,0,0,0,0,
+            0,0,1,0,0,
+            0,1,1,0,0)
+
+go_40[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,0,0,2,0,
+            0,2,0,0,0)
+
+```
+
+```{r}
+go_41 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_41[[2]]
+data <- go_41[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_41[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_41[[1]][[2]]
+vals_2 <- c(0,0,0,1,0,
+            1,0,1,0,0,
+            0,2,1,1,0)
+
+go_41[[1]][[3]]
+vals_3 <- c(0,0,2,0,0,
+            1,0,2,0,2,
+            0,2,0,0,1)
+
+```
+
+```{r}
+go_42 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_42[[2]]
+data <- go_42[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_42[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            2,0,0,0,0)
+
+go_42[[1]][[2]]
+vals_2 <- c(2,1,1,0,0,
+            1,1,2,0,0,
+            0,0,0,0,1)
+
+go_42[[1]][[3]]
+vals_3 <- c(2,2,0,2,2,
+            2,0,0,2,0,
+            2,0,0,0,1)
+
+```
+```{r}
+go_43 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_43[[2]]
+data <- go_43[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_43[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_43[[1]][[2]]
+vals_2 <- c(0,0,0,1,0,
+            0,0,0,0,0,
+            0,0,1,1,0)
+
+go_43[[1]][[3]]
+vals_3 <- c(2,0,2,0,1,
+            2,2,0,0,0,
+            0,0,0,2,0)
+
+```
+```{r}
+go_44 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_44[[2]]
+data <- go_44[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_44[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_44[[1]][[2]]
+vals_2 <- c(1,0,0,0,1,
+            1,0,1,1,1,
+            1,0,0,0,0)
+
+go_44[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,2,2,0,0,
+            0,2,0,0,0)
+
+```
+
+```{r}
+go_45 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_45[[2]]
+data <- go_45[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_45[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_45[[1]][[2]]
+vals_2 <- c(0,0,2,0,0,
+            0,0,0,0,1,
+            1,1,1,0,1)
+
+go_45[[1]][[3]]
+vals_3 <- c(0,0,2,0,2,
+            2,0,0,0,0,
+            0,2,0,0,0)
+
+```
+
+```{r}
+go_46 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_46[[2]]
+data <- go_46[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_46[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_46[[1]][[2]]
+vals_2 <- c(0,0,0,0,1,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_46[[1]][[3]]
+vals_3 <- c(1,0,0,0,2,
+            0,0,0,0,0,
+            0,2,2,1,0)
+
+go <- active_learning(data, 4, 12, list(), c(),c(),c())
+```
+# Lets add more data to the test
+
+```{r}
+data <- read_csv("newest_labeled.csv")
+
+unlabeled <- data %>% filter(is.na(class)==TRUE)
+labeled <- data %>% filter(is.na(class)==FALSE)
+
+# this time, we want to split it ad keep 300 obs separate, in case we need to continue improving at this level
+random_order <- unlabeled[sample(1:nrow(unlabeled)),]
+test_data <- random_order[1:300,]
+unlabeled <- random_order[301:nrow(random_order),]
+
+write.csv(test_data, "day_4_test.csv")
+
+# save the rest back into newest labeled
+newest <- rbind(labeled, unlabeled)
+write.csv(newest, "newest_labeled.csv")
+```
+
+
+```{r}
+new_data <- read_csv("newest_labeled (1).csv")
+
+go_52 <- active_learning(new_data, 4, 12, list(), c(),c(),c())
+
+ixes <- go_52[[2]]
+data <- go_52[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_52[[1]][[1]]
+vals_1 <- c(0,1,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_52[[1]][[2]]
+vals_2 <- c(0,0,0,1,2,
+            0,0,0,0,0,
+            1,0,0,2,0)
+
+go_52[[1]][[3]]
+vals_3 <- c(0,1,0,0,2,
+            0,0,0,2,0,
+            0,1,0,0,2)
+
+```
+
+```{r}
+go_53 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_53[[2]]
+data <- go_53[[3]]
+data <- read_csv("newest_labeled.csv")
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_53[[1]][[1]]
+vals_1 <- c(1,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_53[[1]][[2]]
+vals_2 <- c(1,0,0,0,0,
+            1,1,0,0,1,
+            1,1,0,1,0)
+
+go_53[[1]][[3]]
+vals_3 <- c(2,0,0,0,0,
+            1,0,0,2,0,
+            0,0,0,2,0)
+
+```
+
+
+```{r}
+go_54 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_54[[2]]
+data <- go_54[[3]]
+data <- read_csv("newest_labeled.csv")
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_54[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_54[[1]][[2]]
+vals_2 <- c(0,0,2,0,0,
+            0,1,0,1,0,
+            2,1,0,0,0)
+
+go_54[[1]][[3]]
+vals_3 <- c(0,0,0,0,2,
+            0,2,0,0,0,
+            0,0,2,2,2)
+
+```
+
+```{r}
+go_55 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_55[[2]]
+data <- go_55[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_55[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_55[[1]][[2]]
+vals_2 <- c(1,2,1,1,1,
+            1,1,1,0,1,
+            0,0,0,0,0)
+
+go_55[[1]][[3]]
+vals_3 <- c(0,0,2,2,0,
+            0,0,2,2,2,
+            2,0,0,0,0)
+
+```
+
+```{r}
+new_data <- read_csv("newest_labeled.csv")
+go_56 <- active_learning(new_data, 4, 12, list(), c(), c(), c())
+
+ixes <- go_56[[2]]
+data <- go_56[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_56[[1]][[1]]
+vals_1 <- c(2,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_56[[1]][[2]]
+vals_2 <- c(0,0,1,0,0,
+            0,0,0,0,1,
+            1,0,0,0,1)
+
+go_56[[1]][[3]]
+vals_3 <- c(0,0,0,2,2,
+            0,2,2,2,2,
+            0,0,0,2,2)
+
+```
+```{r}
+go_57 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_57[[2]]
+data <- go_57[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_57[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_57[[1]][[2]]
+vals_2 <- c(1,1,0,0,0,
+            0,1,0,1,1,
+            1,0,0,0,0)
+
+go_57[[1]][[3]]
+vals_3 <- c(0,0,0,0,2,
+            2,0,1,0,2,
+            0,0,0,0,0)
+
+```
+```{r}
+go_58 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_58[[2]]
+data <- go_58[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_58[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_58[[1]][[2]]
+vals_2 <- c(1,0,0,0,0,
+            2,0,0,0,1,
+            0,0,0,0,0)
+
+go_58[[1]][[3]]
+vals_3 <- c(0,2,0,0,0,
+            2,2,1,2,2,
+            2,2,0,2,0)
+
+```
+
+```{r}
+go_59 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_59[[2]]
+data <- go_59[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_59[[1]][[1]]
+vals_1 <- c(0,0,2,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_59[[1]][[2]]
+vals_2 <- c(0,0,0,1,0,
+            0,0,0,1,0,
+            1,1,1,0,1)
+
+go_59[[1]][[3]]
+vals_3 <- c(0,2,2,2,0,
+            0,0,2,0,0,
+            0,0,2,0,0)
+
+```
+
+```{r}
+go_60 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_60[[2]]
+data <- go_60[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_60[[1]][[1]]
+vals_1 <- c(0,2,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_60[[1]][[2]]
+vals_2 <- c(0,0,0,1,0,
+            0,0,0,1,0,
+            1,0,0,1,1)
+
+go_60[[1]][[3]]
+vals_3 <- c(0,2,0,0,2,
+            2,0,0,0,0,
+            1,0,0,1,0)
+
+```
+
+
+```{r}
+go_61 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_61[[2]]
+data <- go_61[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_61[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go_61[[1]][[2]]
+vals_2 <- c(0,0,1,1,0,
+            0,0,0,0,0,
+            0,1,1,2,1)
+
+go_61[[1]][[3]]
+vals_3 <- c(2,0,2,0,2,
+            0,0,0,1,0,
+            2,0,0,0,0)
+
+go <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+```
+
+```{r}
+full_data <- read_csv("newest_labeled_1m.csv")
+test1 <- read_csv("day_2_test.csv")
+test2 <- read_csv("day_3_test.csv")
+test1 <- test1[,-c(1,2,8)]
+test2 <- test2[,-c(1:3,9)]
+full_data <- full_data[,-1]
+
+full_data <- rbind(test1,test2,full_data)
+
+go_62 <- active_learning(full_data, 4, 12, list(), c(), c(), c())
+
+ixes <- go_62[[2]]
+data <- go_62[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_62[[1]][[1]]
+vals_1 <- c(1,0,1,1,1,
+            1,0,0,0,1,
+            0,0,1,0,1)
+
+go_62[[1]][[2]]
+vals_2 <- c(2,2,0,0,1,
+            0,0,0,2,0,
+            0,2,0,2,0)
+
+go_62[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            2,0,0,0,0)
+
+```
+
+```{r}
+
+go_63 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+
+ixes <- go_63[[2]]
+data <- go_63[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_63[[1]][[1]]
+vals_1 <- c(1,0,1,1,1,
+            0,1,0,1,1,
+            0,0,0,1,1)
+
+go_63[[1]][[2]]
+vals_2 <- c(2,0,0,0,0,
+            0,2,0,2,0,
+            2,0,0,0,2)
+
+go_63[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,0,0,0,2,
+            0,0,0,0,0)
+
+```
+
+
+```{r}
+full_data <- read_csv("newest_labeled_1m.csv")
+go_64 <- active_learning(full_data, 4, 12, list(), c(), c(), c())
+
+ixes <- go_64[[2]]
+data <- go_64[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_64[[1]][[1]]
+vals_1 <- c(0,0,0,0,0,
+            1,1,0,1,0,
+            0,0,0,0,1)
+
+go_64[[1]][[2]]
+vals_2 <- c(0,2,0,2,0,
+            0,0,0,2,0,
+            0,0,0,0,0)
+
+go_64[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            0,1,0,0,0)
+
+```
+
+```{r}
+go_65 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_65[[2]]
+data <- go_65[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_65[[1]][[1]]
+vals_1 <- c(0,0,0,0,2,
+            0,1,1,0,0,
+            0,0,1,1,0)
+
+go_65[[1]][[2]]
+vals_2 <- c(2,0,0,2,2,
+            0,2,0,0,0,
+            0,0,0,1,0)
+
+go_65[[1]][[3]]
+vals_3 <- c(2,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+```
+
+```{r}
+go_66 <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+
+ixes <- go_66[[2]]
+data <- go_66[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_66[[1]][[1]]
+vals_1 <- c(0,1,1,2,0,
+            0,0,0,0,0,
+            1,0,1,0,0)
+
+go_66[[1]][[2]]
+vals_2 <- c(1,0,0,0,2,
+            1,0,2,0,0,
+            2,0,0,0,0)
+
+go_66[[1]][[3]]
+vals_3 <- c(1,0,0,0,0,
+            0,0,0,0,0,
+            0,0,0,0,0)
+
+go <- active_learning(data, 4, 12, ixes, vals_1, vals_2, vals_3)
+data <- go[[3]]
+```
+
+## Adding in the next data
+```{r}
+data <- read_csv("newest_labeled_1m.csv")
+next_data <- read_csv("distinct_data_5.csv")
+next_data <- next_data[,-1]
+data <- data[,-1]
+
+random_order <- next_data[sample(1:nrow(next_data)),]
+held_out <- random_order[1:1000,]
+next_data <- random_order[1001:nrow(random_order),]
+
+full_data <- rbind(data, next_data)
+write.csv(full_data, "newest_labeled_1m.csv")
+write.csv(held_out, "final_test.csv")
+```
+
+
+```{r}
+go_67 <- active_learning(full_data, 4, 12, list(), c(), c(),c())
+
+ixes <- go_67[[2]]
+data <- go_67[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_67[[1]][[1]]
+vals_1 <- c(0,1,0,2,0,
+            0,2,0,1,1,
+            0,0,1,0,0)
+
+go_67[[1]][[2]]
+vals_2 <- c(0,2,0,0,1,
+            0,2,2,0,0,
+            2,2,0,0,0)
+
+go_67[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            2,0,0,0,0)
+
+```
+```{r}
+full_data <- read_csv("newest_labeled_1m.csv")
+nrow(full_data 
+     %>% filter(is.na(class)==TRUE)
+)
+
+
+go_68 <- active_learning(full_data, 4, 12, list(),c(), c(), c())
+
+ixes <- go_68[[2]]
+data <- go_68[[3]]
+
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+ten_fold_SVM(data, 3, 12)
+
+go_67[[1]][[1]]
+vals_1 <- c(0,1,0,2,0,
+            0,2,0,1,1,
+            0,0,1,0,0)
+
+go_67[[1]][[2]]
+vals_2 <- c(0,2,0,0,1,
+            0,2,2,0,0,
+            2,2,0,0,0)
+
+go_67[[1]][[3]]
+vals_3 <- c(0,0,0,0,0,
+            0,0,0,0,0,
+            2,0,0,0,0)
+
+
+
+```
+
+```{r}
+# keep the unlabeled separate
+all <- read_csv("newest_labeled.csv")
+
+labeled <- all %>% filter(is.na(class)==FALSE)
+write.csv(labeled, "labeled.csv")
+
+unlabeled <- all %>% filter(is.na(class)==TRUE)
+write.csv(unlabeled, "unlabeled.csv")
+
+```
+
+# Quick Extra Test - lower c
+```{r}
+tested <- read_csv("final_test.csv")
+labeled <- read_csv("labeled.csv")
+
+tested <- tested[,-1]
+labeled <- labeled[,-c(1:3)]
+
+test <- rbind(labeled, tested)
+
+test_data <- rbind(labeled, tested)
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 2)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(new),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+#tested$preds <- preds
+#write.csv(tested, "one_m_res.csv")
+
+```
+
+```{r}
+library(readr)
+library(caret)
+library(dplyr)
+library(quanteda)
+library(e1071)
+unlabeled <- read_csv("unlabeled.csv")
+labeled <- read_csv("labeled.csv")
+
+
+labeled <- labeled[,-c(1:3)]
+unlabeled <- unlabeled[,-c(1:3)]
+
+test_data <- rbind(labeled, unlabeled)
+
+# transform response variable to factor
+test_data$class <- factor(test_data$class)
+  
+corpus <- corpus(test_data, text_field="text") 
+toks <- tokens(corpus, remove_punct = TRUE, remove_url=TRUE, remove_numbers = TRUE, verbose=TRUE)
+toks_stop <- tokens_remove(toks, c(stopwords("english"),"https", "rt", "http", "u", "amp"))
+toks_ngram <- tokens_ngrams(toks_stop, n = 1:2)
+mydfm <- dfm(toks_ngram, tolower=TRUE)
+mydfm <- dfm_trim(mydfm, min_docfreq = 3)
+
+# Separate labeled documents from unlabeled documents 
+labeled_dfm <- mydfm[1:nrow(labeled),]
+unlabeled_dfm <-  mydfm[(nrow(labeled)+1):nrow(mydfm),]
+  
+
+svmfit <- svm(x=labeled_dfm, y=docvars(labeled_dfm, "class"), kernel = "linear", cost = 12, scale = FALSE)
+  
+# target observations closest to decision boundary
+# predicting labels for test set
+preds <- predict(svmfit, newdata = unlabeled_dfm)
+
+conf_matrix <- confusionMatrix(preds, docvars(unlabeled_dfm, "class"), mode = "everything")
+conf_matrix
+
+#tested$preds <- preds
+#write.csv(tested, "one_m_res.csv")
+
 ```
 
