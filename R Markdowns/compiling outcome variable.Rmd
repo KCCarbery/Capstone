@@ -1,0 +1,68 @@
+---
+title: "Compiling outcome variable"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#rm(list = ls())
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+stringency <- read.csv("../Data/covid-stringency-index.csv")
+```
+
+```{r}
+stringency <- stringency %>%
+  select(-Code) %>%
+  rename(Date = Day) %>%
+  rename(Country = Entity) 
+
+stringency$Date <- as.Date(stringency$Date,
+  format = "%Y-%m-%d")
+
+stringency <- stringency %>% filter(Country %in% c("Australia", "Canada", "Ireland", "New Zealand", "United Kingdom"))
+```
+
+```{r}
+openness <- read.csv("../Data/riskindex_timeseries_latest.csv")
+```
+
+```{r}
+openness <- openness %>%
+  select(CountryName, Date, openness_risk)
+
+openness$Date <- as.Date(openness$Date,
+  format = "%d/%m/%Y")
+
+#Rescale 
+openness$openness_risk <- openness$openness_risk*100
+```
+
+```{r}
+openness <- openness %>%
+  rename(Country = CountryName)
+openness <- openness %>% filter(Country %in% c("Australia", "Canada", "Ireland", "New Zealand", "United Kingdom"))
+```
+
+```{r}
+covid_indicators <- merge(stringency, openness)
+covid_indicators <- covid_indicators %>% filter(Date > "2020-03-31")
+covid_indicators$relative_stringency <- covid_indicators$stringency_index- covid_indicators$openness_risk 
+```
+
+
+```{r}
+ggplot(covid_indicators, aes(x= Date, y = relative_stringency, colour = Country)) + geom_line() + theme_classic()
+```
+
+
+```{r}
+write.csv(covid_indicators, "covid_indicators.csv")
+```
