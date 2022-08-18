@@ -10,12 +10,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(readr)
-doubled <- read_csv("../training_sets/intracoder.csv")
-doubled$class_old <- ifelse(doubled$`Anti lockdown`==1,2,0)
-doubled$class_old <- ifelse(doubled$`Pro lockdown`==1,1,doubled$class_old)
+library(dplyr)
+doubled <- read_csv("../Data/intracoding.csv")
+
+
+doubled$class_old <- ifelse(doubled$anti==1,2,0)
+doubled$class_old <- ifelse(doubled$pro==1,1,doubled$class_old)
 
 doubled$class_new <- ifelse(doubled$New_Anti==1,2,0)
-doubled$class_new <- ifelse(doubled$New_Pro==1,1,doubled$class_old)
+doubled$class_new <- ifelse(doubled$New_Pro==1,1,doubled$class_new)
+
 
 
 ```
